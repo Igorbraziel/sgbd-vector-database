@@ -1,0 +1,20 @@
+[project]
+name = "sgbd-vector-database"
+version = "0.1.0"
+description = "Demo de RAG com Arxiv usando Qdrant como SGBD Vetorial"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "qdrant-client>=1.9.0",
+    "InstructorEmbedding",
+    "sentence-transformers",
+    "torch",
+    "google-genai>=1.0.0",
+    "streamlit>=1.30.0",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+]
