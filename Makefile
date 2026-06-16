@@ -7,6 +7,7 @@
 
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
+export PYTHONPATH := .
 
 # --- Variáveis -------------------------------------------------
 COMPOSE     := docker compose
@@ -40,7 +41,7 @@ app: ## Executar a UI Streamlit localmente
 
 .PHONY: init
 init: ## Restaurar o snapshot Arxiv no Qdrant
-	uv run python scripts/init_collection.py
+	$(COMPOSE) exec $(APP_SERVICE) uv run python scripts/init_collection.py
 
 # ============================================================
 #  Docker
