@@ -21,7 +21,7 @@ if not hasattr(INSTRUCTOR, "_text_length"):
         return len(text)
     INSTRUCTOR._text_length = _text_length
 
-from src.config import EMBEDDING_MODEL, GOOGLE_API_KEY, GEMINI_MODELS
+from src.config import EMBEDDING_MODEL, GOOGLE_API_KEY, GEMINI_MODELS, HF_TOKEN
 
 _model: INSTRUCTOR | None = None
 
@@ -31,7 +31,12 @@ def _get_model() -> INSTRUCTOR:
     global _model
     if _model is None:
         print(f"⏳ Carregando modelo de embeddings: {EMBEDDING_MODEL}...")
-        _model = INSTRUCTOR(EMBEDDING_MODEL)
+        kwargs = {}
+        if HF_TOKEN:
+            # Passa o token para evitar rate limits no Hugging Face
+            kwargs["token"] = HF_TOKEN
+            
+        _model = INSTRUCTOR(EMBEDDING_MODEL, **kwargs)
         print("✅ Modelo carregado com sucesso!")
     return _model
 

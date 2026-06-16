@@ -17,6 +17,7 @@ from src.config import COLLECTION_NAME, GEMINI_MODELS
 from src.qdrant_client_setup import collection_exists, get_collection_info
 from src.search import busca_semantica, busca_hibrida, busca_multi_filtro
 from src.rag import perguntar
+from src.embedding import _get_model
 
 # ============================================================
 #  Configuração da Página
@@ -28,6 +29,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Pré-carregar o modelo de embeddings no cache do Streamlit
+@st.cache_resource(show_spinner="⏳ Carregando modelo de embeddings na memória (isso pode demorar na primeira vez)...")
+def init_embedding_model():
+    _get_model()
+
+init_embedding_model()
 
 # ============================================================
 #  CSS Customizado

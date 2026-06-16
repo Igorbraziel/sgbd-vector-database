@@ -36,6 +36,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 
+# Pré-baixar o modelo de embeddings (cache na imagem Docker)
+RUN uv run python -c "from src.embedding import _get_model; _get_model()"
+
 # Porta do Streamlit
 EXPOSE 8501
 

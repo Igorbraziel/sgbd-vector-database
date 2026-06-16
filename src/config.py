@@ -18,6 +18,9 @@ COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "arxiv_papers")
 # --- Google Gemini ---
 GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
 
+# --- Hugging Face ---
+HF_TOKEN: str = os.getenv("HF_TOKEN", "")
+
 # Cadeia de fallback de modelos (do mais desejado ao mais leve)
 GEMINI_MODELS: list[str] = [
     "gemma-4-27b-it",           # Gemma 4 (principal)
