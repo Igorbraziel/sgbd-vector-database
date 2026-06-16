@@ -9,7 +9,8 @@ FROM python:3.11-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    PYTHONPATH=/app
 
 # Instalar dependências do sistema
 RUN apt-get update && \
@@ -27,8 +28,9 @@ WORKDIR /app
 # Copiar arquivos de dependência primeiro (cache de camadas Docker)
 COPY pyproject.toml uv.lock ./
 
-# Instalar dependências (frozen = usa exatamente o uv.lock)
-RUN uv sync --frozen --no-dev --no-install-project
+# Instalar dependências (frozen = usa exatamente o uv.lock, mount = cache persistente)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
 # Copiar código-fonte
 COPY src/ ./src/
