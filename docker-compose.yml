@@ -29,6 +29,9 @@ services:
       - "8501:8501"
     env_file:
       - .env
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
     depends_on:
       qdrant:
         condition: service_healthy
