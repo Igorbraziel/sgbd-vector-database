@@ -9,7 +9,19 @@ O modelo é carregado uma única vez (singleton) e reutilizado em todas as chama
 
 from InstructorEmbedding import INSTRUCTOR
 
-from src.config import EMBEDDING_MODEL
+# Monkey-patch: INSTRUCTOR inherits from SentenceTransformer. Newer versions of
+# sentence-transformers have removed/renamed _text_length, which breaks INSTRUCTOR's
+# internal batch sorting in encode().
+if not hasattr(INSTRUCTOR, "_text_length"):
+    def _text_length(self, text):
+        if isinstance(text, dict):
+            return len(text.get("title", "")) + len(text.get("text", ""))
+        elif isinstance(text, (list, tuple)):
+            return sum([len(t) for t in text])
+        return len(text)
+    INSTRUCTOR._text_length = _text_length
+
+from src.config import EMBEDDING_MODEL, GOOGLE_API_KEY, GEMINI_MODELS
 
 _model: INSTRUCTOR | None = None
 
@@ -22,6 +34,55 @@ def _get_model() -> INSTRUCTOR:
         _model = INSTRUCTOR(EMBEDDING_MODEL)
         print("✅ Modelo carregado com sucesso!")
     return _model
+
+
+def _translate_to_english(text: str) -> str:
+    """
+    Translates a query to English using Google Gemini.
+
+    The arxiv_abstracts dataset contains only English abstracts, so queries
+    in other languages (e.g. Portuguese) produce embeddings that match on
+    language signal rather than semantic meaning. Translating to English
+    before encoding ensures the query vector aligns with the corpus.
+
+    Falls back to the original text if translation fails.
+    """
+    if not GOOGLE_API_KEY:
+        return text
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+
+        for modelo in GEMINI_MODELS:
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=(
+                        "Translate the following text to English. "
+                        "If it is already in English, return it unchanged. "
+                        "Return ONLY the translated text, nothing else.\n\n"
+                        f"{text}"
+                    ),
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=256,
+                    ),
+                )
+                translated = response.text.strip()
+                if translated:
+                    if translated != text:
+                        print(f"🌐 Query traduzida: '{text}' → '{translated}'")
+                    return translated
+            except Exception:
+                continue
+
+    except Exception:
+        pass
+
+    return text
 
 
 def encode(text: str, instruction: str = "Represent the academic document for retrieval:") -> list[float]:
@@ -45,16 +106,18 @@ def encode_query(query: str) -> list[float]:
     """
     Gera um embedding otimizado para consultas de busca.
 
-    Usa uma instrução diferente do encode() para melhor performance
-    em tarefas de recuperação (retrieval).
+    Primeiro traduz a consulta para inglês (se necessário), já que o dataset
+    contém apenas abstracts em inglês. Em seguida, gera o embedding com uma
+    instrução otimizada para tarefas de recuperação (retrieval).
 
     Args:
-        query: A pergunta ou consulta do usuário.
+        query: A pergunta ou consulta do usuário (em qualquer idioma).
 
     Returns:
         Lista de 768 floats.
     """
+    translated_query = _translate_to_english(query)
     return encode(
-        text=query,
+        text=translated_query,
         instruction="Represent the question for retrieving relevant academic papers:",
     )

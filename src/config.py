@@ -29,7 +29,7 @@ GEMINI_MODELS: list[str] = [
 # --- Snapshot ---
 SNAPSHOT_URL: str = os.getenv(
     "SNAPSHOT_URL",
-    "https://snapshots.qdrant.io/arxiv-abstracts-instructorxl-768.snapshot",
+    "https://snapshots.qdrant.io/arxiv_abstracts-2108082541245612-2026-06-04-09-56-06.snapshot",
 )
 
 # --- Embedding ---

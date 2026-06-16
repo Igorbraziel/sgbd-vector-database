@@ -12,7 +12,7 @@ _client: QdrantClient | None = None
 
 
 def get_client() -> QdrantClient:
-    """Retorna uma instância singleton do QdrantClient."""
+    """Retorna uma instância do QdrantClient."""
     global _client
     if _client is None:
         _client = QdrantClient(

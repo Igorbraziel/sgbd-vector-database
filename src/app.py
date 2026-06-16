@@ -3,9 +3,12 @@ Interface Streamlit — Demo RAG com Qdrant.
 
 Quatro abas para demonstração durante a apresentação:
   🔍 Busca Semântica — busca por similaridade vetorial pura
-  🎯 Busca Híbrida   — vetor + filtro de metadados (contraste com SQL WHERE)
+  🎯 Busca Híbrida   — vetor + filtro de texto no campo 'abstract'
   🤖 RAG Q&A         — pipeline completo com LLM (Google Gemini)
   ⚙️ Info da Coleção  — estatísticas, esquema e configuração HNSW
+
+Dataset: arxiv_abstracts (Qdrant public snapshot)
+Campos de payload disponíveis: abstract, doi
 """
 
 import streamlit as st
@@ -64,10 +67,6 @@ st.markdown("""
         transform: translateY(-2px);
         box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
     }
-    .result-card h4 {
-        color: #667eea;
-        margin-bottom: 0.5rem;
-    }
     .result-card .score {
         background: linear-gradient(135deg, #667eea, #764ba2);
         color: white;
@@ -76,22 +75,23 @@ st.markdown("""
         font-size: 0.85rem;
         font-weight: 600;
         display: inline-block;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.8rem;
     }
-    .result-card .meta {
-        color: rgba(255,255,255,0.5);
-        font-size: 0.85rem;
-    }
-
-    /* Badge de categoria */
-    .category-badge {
+    .result-card .doi-badge {
         background: rgba(102, 126, 234, 0.15);
-        color: #667eea;
-        padding: 0.15rem 0.5rem;
+        color: #a5b4fc;
+        padding: 0.15rem 0.6rem;
         border-radius: 6px;
         font-size: 0.8rem;
-        margin-right: 0.3rem;
+        font-family: monospace;
+        margin-left: 0.5rem;
         display: inline-block;
+    }
+    .result-card .abstract-text {
+        color: rgba(255,255,255,0.75);
+        font-size: 0.92rem;
+        line-height: 1.65;
+        margin-top: 0.8rem;
     }
 
     /* Info box */
@@ -136,6 +136,17 @@ st.markdown("""
         margin: 1rem 0;
         line-height: 1.7;
     }
+
+    /* Keyword highlight badge */
+    .keyword-badge {
+        background: rgba(118, 75, 162, 0.25);
+        color: #c084fc;
+        padding: 0.15rem 0.55rem;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        font-family: monospace;
+        display: inline-block;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -175,27 +186,32 @@ def _check_connection():
 #  Funções Auxiliares de Renderização
 # ============================================================
 
-def _render_resultado(resultado, idx: int):
+def _render_resultado(resultado, idx: int, highlight_keyword: str | None = None):
     """Renderiza um card de resultado de busca."""
-    categorias_html = " ".join(
-        f'<span class="category-badge">{cat.strip()}</span>'
-        for cat in resultado.categorias.split() if cat.strip()
+    doi_html = (
+        f'<span class="doi-badge">DOI: {resultado.doi}</span>'
+        if resultado.doi else ""
     )
 
+    # Score badge + DOI (styled HTML, no user-generated content)
     st.markdown(f"""
     <div class="result-card">
         <span class="score">🎯 Score: {resultado.score:.4f}</span>
-        <h4>{resultado.titulo}</h4>
-        <p class="meta">👥 {resultado.autores[:150]}{'...' if len(resultado.autores) > 150 else ''}</p>
-        <p>{categorias_html}</p>
-        <details>
-            <summary>📄 Ver resumo completo</summary>
-            <p style="margin-top: 0.5rem; color: rgba(255,255,255,0.7); line-height: 1.6;">
-                {resultado.resumo}
-            </p>
-        </details>
+        {doi_html}
     </div>
     """, unsafe_allow_html=True)
+
+    # Abstract text using native Streamlit (safe for LaTeX/special chars)
+    resumo_preview = resultado.resumo[:400].strip()
+    if len(resultado.resumo) > 400:
+        resumo_preview += "..."
+
+    st.caption(resumo_preview)
+
+    # Full abstract in expander if truncated
+    if len(resultado.resumo) > 400:
+        with st.expander(f"📄 Ver resumo completo — resultado #{idx + 1}"):
+            st.write(resultado.resumo)
 
 
 # ============================================================
@@ -257,10 +273,16 @@ with tab_semantica:
 
 # --- Aba 2: Busca Híbrida ---
 with tab_hibrida:
-    st.markdown("### 🎯 Busca Híbrida (Vetor + Filtro)")
+    st.markdown("### 🎯 Busca Híbrida (Vetor + Filtro de Texto)")
     st.markdown(
-        "Combina **similaridade vetorial** com **filtro de metadados** "
+        "Combina **similaridade vetorial** com **filtro de palavra-chave no abstract** "
         "em uma única operação — o grande diferencial do Qdrant."
+    )
+    st.info(
+        "💡 **Como funciona:** a palavra-chave é verificada diretamente no campo `abstract` "
+        "de cada ponto usando `MatchText`, enquanto o HNSW navega o grafo de vizinhos. "
+        "Nenhuma etapa separada de filtragem.",
+        icon="🔑",
     )
 
     with st.container():
@@ -272,49 +294,51 @@ with tab_hibrida:
                 key="query_hibrida",
             )
         with col2:
-            categoria = st.text_input(
-                "Filtrar por categoria Arxiv:",
-                placeholder="Ex: cs.DB, cs.AI, cs.LG",
-                key="categoria_hibrida",
+            keyword_hib = st.text_input(
+                "Filtrar por palavra-chave no abstract:",
+                placeholder="Ex: transformer, graph, neural",
+                key="keyword_hibrida",
             )
         with col3:
             limite_hib = st.number_input("Resultados:", min_value=1, max_value=20, value=5, key="limite_hib")
 
     if st.button("🎯 Buscar com Filtro", key="btn_hibrida", type="primary"):
         if query_hib and _check_connection():
-            cat = categoria.strip() if categoria else None
+            kw = keyword_hib.strip() if keyword_hib else None
             with st.spinner("Busca híbrida em andamento..."):
-                resultados = busca_hibrida(query_hib, categoria=cat, limite=limite_hib)
+                resultados = busca_hibrida(query_hib, keyword=kw, limite=limite_hib)
 
             if resultados:
-                st.success(f"✅ {len(resultados)} artigos encontrados" +
-                           (f" na categoria **{cat}**!" if cat else "!"))
+                kw_label = f' contendo **"{kw}"** no abstract' if kw else ""
+                st.success(f"✅ {len(resultados)} artigos encontrados{kw_label}!")
                 for i, r in enumerate(resultados):
-                    _render_resultado(r, i)
+                    _render_resultado(r, i, highlight_keyword=kw)
             else:
                 st.info("Nenhum resultado encontrado com esses filtros.")
 
     with st.expander("💡 Contraste com SGBD Relacional"):
         st.markdown("""
         **No Qdrant — Filtro em Uma Etapa:**
-        ```
+        ```python
         query_points(
             query=vetor_768d,
-            query_filter=Filter(must=[FieldCondition(key="categories", match="cs.DB")])
+            query_filter=Filter(
+                must=[FieldCondition(key="abstract", match=MatchText(text="transformer"))]
+            )
         )
         ```
-        O filtro JSON é verificado **durante** a travessia do grafo HNSW.
+        O filtro de texto é verificado **durante** a travessia do grafo HNSW.
         Não há etapa separada de filtragem.
 
         **Em um SGBD Relacional — Duas Etapas:**
         ```sql
         SELECT * FROM papers
-        WHERE categories = 'cs.DB'                    -- 1. Índice B-Tree
-        ORDER BY similarity(embedding, ?) DESC         -- 2. Ordenação separada
+        WHERE abstract LIKE '%transformer%'        -- 1. Full-text scan / índice GIN
+        ORDER BY similarity(embedding, ?) DESC     -- 2. Ordenação separada
         LIMIT 5;
         ```
         O otimizador de consultas (cost-based optimizer) decide se usa o índice
-        B-Tree primeiro ou faz um sequential scan. São **duas operações distintas**.
+        GIN/GiST primeiro ou faz um sequential scan. São **duas operações distintas**.
         """)
 
 
@@ -335,10 +359,10 @@ with tab_rag:
                 key="query_rag",
             )
         with col2:
-            cat_rag = st.text_input(
-                "Categoria (opcional):",
-                placeholder="cs.DB",
-                key="cat_rag",
+            kw_rag = st.text_input(
+                "Palavra-chave no abstract (opcional):",
+                placeholder="Ex: HNSW, attention",
+                key="kw_rag",
             )
 
     num_artigos = st.slider(
@@ -348,22 +372,20 @@ with tab_rag:
 
     if st.button("🤖 Perguntar", key="btn_rag", type="primary"):
         if query_rag and _check_connection():
-            cat = cat_rag.strip() if cat_rag else None
+            kw = kw_rag.strip() if kw_rag else None
             with st.spinner("🔄 Buscando artigos e consultando Google Gemini..."):
                 try:
                     resultado_rag = perguntar(
                         pergunta=query_rag,
-                        categoria=cat,
+                        keyword=kw,
                         num_artigos=num_artigos,
                     )
 
                     # Resposta do LLM
                     st.markdown(f"#### 💬 Resposta (via `{resultado_rag.modelo}`)")
-                    st.markdown(f"""
-                    <div class="rag-response">
-                        {resultado_rag.resposta}
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown("---")
+                    st.markdown(resultado_rag.resposta)
+                    st.markdown("---")
 
                     # Fontes
                     st.markdown(f"#### 📚 Fontes ({len(resultado_rag.fontes)} artigos)")
@@ -424,6 +446,25 @@ with tab_info:
 
             st.markdown("---")
 
+            # Payload info
+            st.markdown("#### 📦 Campos de Payload Disponíveis")
+            st.markdown("""
+            <div class="info-box">
+                <h4>Dataset: arxiv_abstracts (Qdrant Public Snapshot)</h4>
+                <p>Este snapshot pré-computado é otimizado para benchmarking de busca semântica
+                e expõe apenas dois campos de payload por ponto:</p>
+                <ul>
+                    <li><strong>abstract</strong> — Texto do resumo do artigo (usado para gerar o embedding)</li>
+                    <li><strong>doi</strong> — Identificador digital do artigo (DOI / arXiv ID)</li>
+                </ul>
+                <p style="color: rgba(255,255,255,0.5); font-size: 0.85rem;">
+                    Campos como título, autores e categorias não estão presentes neste snapshot.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown("---")
+
             # Detalhes HNSW
             st.markdown("#### 🔗 Configuração do Índice HNSW")
             col1, col2 = st.columns(2)
@@ -481,6 +522,15 @@ with st.sidebar:
     - **LLM:** Google Gemini (com fallback)
     - **Interface:** Streamlit
     - **Orquestração:** Docker Compose
+    """)
+    st.markdown("---")
+    st.markdown("### 📦 Dataset")
+    st.markdown("""
+    **arxiv_abstracts** (Qdrant snapshot público)
+
+    Campos de payload:
+    - `abstract` — resumo do artigo
+    - `doi` — identificador do artigo
     """)
     st.markdown("---")
     st.markdown("### 🤖 Cadeia de Modelos")

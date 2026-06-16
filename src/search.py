@@ -2,9 +2,13 @@
 Funções de busca no Qdrant.
 
 Implementa três modos de busca para demonstração:
-  1. Busca Semântica Pura — apenas similaridade vetorial.
-  2. Busca Híbrida com Filtro — vetor + filtro de metadados (ex: categoria).
-  3. Busca Multi-Filtro — combinação de condições (must, should, must_not).
+  1. Busca Semântica Pura   — apenas similaridade vetorial.
+  2. Busca Híbrida com Filtro — vetor + filtro de texto no campo 'abstract'.
+  3. Busca Multi-Filtro     — combinação de must/must_not por palavras no abstract.
+
+O dataset arxiv_abstracts contém apenas dois campos de payload por ponto:
+  - abstract: texto do resumo do artigo.
+  - doi: identificador digital do artigo.
 
 Cada modo contrasta com o equivalente relacional SQL para fins da apresentação.
 """
@@ -14,8 +18,7 @@ from dataclasses import dataclass
 from qdrant_client.models import (
     FieldCondition,
     Filter,
-    MatchValue,
-    Range,
+    MatchText,
 )
 
 from src.config import COLLECTION_NAME
@@ -28,12 +31,8 @@ class ResultadoBusca:
     """Resultado de uma busca no Qdrant."""
 
     score: float
-    titulo: str
     resumo: str
-    autores: str
-    categorias: str
     doi: str | None = None
-    journal_ref: str | None = None
 
 
 def _parse_resultado(point) -> ResultadoBusca:
@@ -41,12 +40,8 @@ def _parse_resultado(point) -> ResultadoBusca:
     payload = point.payload or {}
     return ResultadoBusca(
         score=point.score,
-        titulo=payload.get("title", "Sem título"),
         resumo=payload.get("abstract", ""),
-        autores=payload.get("authors", ""),
-        categorias=payload.get("categories", ""),
         doi=payload.get("doi"),
-        journal_ref=payload.get("journal-ref"),
     )
 
 
@@ -79,26 +74,29 @@ def busca_semantica(query: str, limite: int = 5) -> list[ResultadoBusca]:
 
 def busca_hibrida(
     query: str,
-    categoria: str | None = None,
+    keyword: str | None = None,
     limite: int = 5,
 ) -> list[ResultadoBusca]:
     """
-    Busca híbrida — vetor + filtro de metadados em uma única etapa.
+    Busca híbrida — vetor + filtro de texto no campo 'abstract'.
+
+    Usa MatchText para verificar se a palavra-chave está presente no texto
+    do abstract de cada ponto, combinado com a similaridade vetorial.
 
     Contraste com SQL Relacional:
         Em um SGBD relacional, seria necessário:
             SELECT * FROM papers
-            WHERE categories = 'cs.DB'
+            WHERE abstract LIKE '%keyword%'
             ORDER BY similarity(embedding, query_vector) DESC
             LIMIT 5;
 
-        O otimizador relacional avaliaria o WHERE com um índice B-Tree
-        e depois faria a ordenação. O Qdrant faz tudo em uma única
-        travessia do grafo HNSW, verificando o filtro JSON on-the-fly.
+        O otimizador relacional avaliaria o WHERE com um full-text index
+        ou sequential scan, depois ordenaria. O Qdrant faz tudo em uma
+        única travessia do grafo HNSW, verificando o filtro JSON on-the-fly.
 
     Args:
         query: Pergunta ou tema em linguagem natural.
-        categoria: Filtro por categoria Arxiv (ex: "cs.DB", "cs.AI").
+        keyword: Palavra-chave para filtrar dentro do campo 'abstract'.
         limite: Número máximo de resultados.
 
     Returns:
@@ -107,14 +105,14 @@ def busca_hibrida(
     client = get_client()
     query_vector = encode_query(query)
 
-    # Montar filtro se a categoria foi fornecida
+    # Montar filtro de texto no abstract, se keyword fornecida
     query_filter = None
-    if categoria:
+    if keyword:
         query_filter = Filter(
             must=[
                 FieldCondition(
-                    key="categories",
-                    match=MatchValue(value=categoria),
+                    key="abstract",
+                    match=MatchText(text=keyword),
                 )
             ]
         )
@@ -131,21 +129,22 @@ def busca_hibrida(
 
 def busca_multi_filtro(
     query: str,
-    categorias_incluir: list[str] | None = None,
-    categorias_excluir: list[str] | None = None,
+    keywords_incluir: list[str] | None = None,
+    keywords_excluir: list[str] | None = None,
     limite: int = 5,
 ) -> list[ResultadoBusca]:
     """
-    Busca multi-filtro — combinação complexa de condições.
+    Busca multi-filtro — combinação complexa de condições de texto no abstract.
 
     Demonstra as capacidades avançadas de filtragem do Qdrant:
-        - must: todas as condições devem ser verdadeiras
-        - must_not: nenhuma das condições pode ser verdadeira
+        - must:     todas as palavras-chave devem estar no abstract
+        - must_not: nenhuma das palavras-chave pode estar no abstract
 
     Contraste com SQL:
         SELECT * FROM papers
-        WHERE categories IN ('cs.DB', 'cs.AI')
-          AND categories NOT IN ('cs.CV')
+        WHERE abstract LIKE '%neural%'
+          AND abstract LIKE '%graph%'
+          AND abstract NOT LIKE '%image%'
         ORDER BY similarity(embedding, query_vector) DESC;
 
         No Qdrant, isso é avaliado durante a travessia HNSW,
@@ -153,8 +152,8 @@ def busca_multi_filtro(
 
     Args:
         query: Pergunta ou tema.
-        categorias_incluir: Lista de categorias que devem estar presentes.
-        categorias_excluir: Lista de categorias a excluir.
+        keywords_incluir: Palavras-chave que devem aparecer no abstract.
+        keywords_excluir: Palavras-chave que NÃO podem aparecer no abstract.
         limite: Número máximo de resultados.
 
     Returns:
@@ -166,16 +165,16 @@ def busca_multi_filtro(
     must_conditions = []
     must_not_conditions = []
 
-    if categorias_incluir:
-        for cat in categorias_incluir:
+    if keywords_incluir:
+        for kw in keywords_incluir:
             must_conditions.append(
-                FieldCondition(key="categories", match=MatchValue(value=cat))
+                FieldCondition(key="abstract", match=MatchText(text=kw))
             )
 
-    if categorias_excluir:
-        for cat in categorias_excluir:
+    if keywords_excluir:
+        for kw in keywords_excluir:
             must_not_conditions.append(
-                FieldCondition(key="categories", match=MatchValue(value=cat))
+                FieldCondition(key="abstract", match=MatchText(text=kw))
             )
 
     query_filter = None

@@ -3,9 +3,13 @@ Pipeline RAG (Retrieval-Augmented Generation).
 
 Fluxo completo:
   1. Pergunta do usuário → embedding InstructorXL
-  2. Busca semântica no Qdrant → artigos relevantes
+  2. Busca semântica/híbrida no Qdrant → artigos relevantes
   3. Contexto dos artigos → prompt para o LLM (Google Gemini)
   4. Resposta do LLM citando os artigos encontrados
+
+O dataset arxiv_abstracts contém apenas dois campos de payload:
+  - abstract: texto do resumo
+  - doi:      identificador do artigo
 
 Cadeia de fallback de modelos:
   Gemma 4 27B → Gemini 3.1 Flash Lite → Gemini 2.5 Flash Lite → Gemini 2.5 Flash
@@ -36,9 +40,6 @@ def _construir_contexto(artigos: list[ResultadoBusca]) -> str:
     for i, artigo in enumerate(artigos, 1):
         parte = (
             f"--- Artigo {i} (Similaridade: {artigo.score:.4f}) ---\n"
-            f"Título: {artigo.titulo}\n"
-            f"Autores: {artigo.autores}\n"
-            f"Categorias: {artigo.categorias}\n"
             f"Resumo: {artigo.resumo}\n"
         )
         if artigo.doi:
@@ -52,8 +53,8 @@ def _construir_contexto(artigos: list[ResultadoBusca]) -> str:
 _SYSTEM_INSTRUCTION = (
     "Você é um assistente acadêmico especializado. "
     "Responda a pergunta baseando-se EXCLUSIVAMENTE no contexto "
-    "fornecido (artigos do Arxiv). "
-    "Cite os artigos pelo título quando usar informações deles. "
+    "fornecido (resumos de artigos do Arxiv). "
+    "Cite trechos relevantes dos resumos quando usar informações deles. "
     "Se o contexto não contiver informação suficiente, diga isso. "
     "Responda em português brasileiro."
 )
@@ -88,7 +89,7 @@ def _chamar_com_fallback(
         RuntimeError: Se todos os modelos falharem.
     """
     prompt = (
-        f"Contexto — Artigos acadêmicos do Arxiv:\n\n"
+        f"Contexto — Resumos de artigos acadêmicos do Arxiv:\n\n"
         f"{contexto}\n\n"
         f"Pergunta: {pergunta}\n\n"
         f"Responda de forma clara e cite os artigos relevantes:"
@@ -123,7 +124,7 @@ def _chamar_com_fallback(
 
 def perguntar(
     pergunta: str,
-    categoria: str | None = None,
+    keyword: str | None = None,
     num_artigos: int = 3,
 ) -> RespostaRAG:
     """
@@ -131,15 +132,15 @@ def perguntar(
 
     Args:
         pergunta: A pergunta do usuário em linguagem natural.
-        categoria: Filtro opcional por categoria Arxiv.
+        keyword: Palavra-chave opcional para filtrar pelo campo 'abstract'.
         num_artigos: Número de artigos a recuperar do Qdrant.
 
     Returns:
         RespostaRAG com a resposta do LLM e os artigos-fonte.
     """
     # 1. Recuperar artigos relevantes do Qdrant
-    if categoria:
-        artigos = busca_hibrida(pergunta, categoria=categoria, limite=num_artigos)
+    if keyword:
+        artigos = busca_hibrida(pergunta, keyword=keyword, limite=num_artigos)
     else:
         artigos = busca_semantica(pergunta, limite=num_artigos)
 
