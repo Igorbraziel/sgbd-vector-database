@@ -12,8 +12,8 @@ Demo de um **SGBD Vetorial (Qdrant)** com busca semântica em artigos do Arxiv e
 
 Este projeto demonstra as capacidades de um SGBD vetorial em contraste com SGBDs relacionais tradicionais:
 
-- **Busca Semântica** — encontra artigos por similaridade de significado, sem palavras-chave exatas
-- **Busca Híbrida** — combina vetores com filtros de metadados em uma única operação
+- **Busca Semântica** — encontra artigos por similaridade de significado, sem palavras-chave exatas (suporta qualquer idioma via tradução automática)
+- **Busca Híbrida** — combina vetores com filtro de texto no campo `abstract` em uma única operação HNSW
 - **RAG (Retrieval-Augmented Generation)** — integração com LLM para respostas baseadas em evidências
 
 ## 🏗️ Arquitetura
@@ -21,7 +21,8 @@ Este projeto demonstra as capacidades de um SGBD vetorial em contraste com SGBDs
 ```mermaid
 graph LR
     U["👤 Usuário"] --> ST["🖥️ Streamlit UI<br/>Porta 8501"]
-    ST --> EMB["🧠 InstructorXL<br/>Modelo de Embeddings"]
+    ST --> TR["🌐 Tradução<br/>Google Gemini"]
+    TR --> EMB["🧠 InstructorXL<br/>Modelo de Embeddings"]
     EMB --> QD["🗄️ Qdrant<br/>Porta 6333"]
     QD --> ST
     ST --> GM["✨ Google Gemini<br/>Gemma 4 / Flash"]
@@ -38,6 +39,7 @@ graph LR
 |---|---|---|
 | **SGBD Vetorial** | Qdrant | Armazena e busca vetores com índice HNSW |
 | **Embeddings** | InstructorXL (768-dim) | Converte texto em vetores semânticos |
+| **Tradução** | Google Gemini | Traduz consultas para inglês antes do embedding |
 | **LLM** | Google Gemini (com fallback) | Gera respostas baseadas no contexto recuperado |
 | **Interface** | Streamlit | UI web para demonstração interativa |
 | **Orquestração** | Docker Compose | Gerencia todos os serviços |
@@ -55,9 +57,12 @@ Se o modelo principal estiver indisponível, o sistema tenta automaticamente o p
 
 Utilizamos o snapshot pré-vetorizado do Arxiv disponibilizado pelo Qdrant:
 
-- **~100k+ artigos acadêmicos** com embeddings pré-computados
-- **Modelo:** InstructorXL (768 dimensões)
-- **Payload:** título, resumo, autores, categorias, DOI, journal-ref
+- **~2.25 milhões de artigos acadêmicos** com embeddings pré-computados
+- **Modelo:** InstructorXL (768 dimensões, Cosine similarity)
+- **Payload disponível:** `abstract` (texto do resumo), `doi` (identificador do artigo)
+- **Índice de texto:** campo `abstract` indexado com tokenizador WORD para buscas híbridas eficientes
+
+> **Nota:** Este snapshot pré-computado é minimalista por design (benchmarking semântico). Campos como título, autores e categorias **não estão presentes** no snapshot público.
 
 ---
 
@@ -68,7 +73,7 @@ Utilizamos o snapshot pré-vetorizado do Arxiv disponibilizado pelo Qdrant:
 - [Docker](https://docs.docker.com/get-docker/) e Docker Compose
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) (gerenciador de pacotes Python)
 - Chave de API do Google AI Studio (gratuita): https://aistudio.google.com/apikey
-- ~4 GB de espaço em disco (imagem Docker + snapshot)
+- ~4 GB de espaço em disco (apenas para a imagem Docker)
 
 ### Setup Rápido
 
@@ -79,49 +84,99 @@ cd sgbd-vector-database
 
 # 2. Criar arquivo .env e configurar GOOGLE_API_KEY
 make env
+# — ou —
+cp .env.example .env
 # Edite o .env e adicione sua chave: GOOGLE_API_KEY=sua-chave-aqui
 
 # 3. Subir todos os serviços
 make up
+# — ou —
+docker compose up --build -d
 
-# 4. Restaurar o snapshot do Arxiv (primeira vez)
+# 4. Carregar o snapshot do Arxiv no Qdrant (primeira vez)
+# O Qdrant faz o streaming direto da URL — nenhum arquivo é salvo no disco
 make init
+# — ou —
+docker compose exec app uv run python scripts/init_collection.py
 
 # 5. Acessar a interface
 # Abra http://localhost:8501 no navegador
 ```
 
-### Desenvolvimento Local
+### Desenvolvimento Local (sem Docker para o app)
 
 ```bash
 # Instalar dependências
 make install
+# — ou —
+uv sync
 
-# Subir apenas o Qdrant
+# Subir apenas o Qdrant via Docker
 make qdrant
+# — ou —
+docker compose up qdrant -d
 
 # Executar a UI localmente
 make app
+# — ou —
+PYTHONPATH=. uv run streamlit run src/app.py
 ```
 
 ---
 
 ## 🛠️ Comandos Disponíveis
 
-Execute `make help` para ver todos os comandos:
+Execute `make help` para ver todos os comandos. Abaixo, cada comando `make` seguido do seu equivalente expandido:
 
-| Comando | Descrição |
+### Instalação & Dependências
+
+| Comando make | Equivalente expandido |
 |---|---|
-| `make install` | Instalar dependências com uv |
-| `make app` | Executar Streamlit localmente |
-| `make init` | Restaurar snapshot do Arxiv |
-| `make up` | Subir todos os serviços Docker |
-| `make down` | Parar todos os serviços |
-| `make logs` | Ver logs em tempo real |
-| `make health` | Verificar saúde do Qdrant |
-| `make lint` | Verificar código com ruff |
-| `make format` | Formatar código com ruff |
-| `make clean` | Limpar caches |
+| `make install` | `uv sync` |
+| `make install-dev` | `uv sync --all-extras` |
+| `make lock` | `uv lock` |
+
+### Desenvolvimento
+
+| Comando make | Equivalente expandido |
+|---|---|
+| `make app` | `PYTHONPATH=. uv run streamlit run src/app.py` |
+| `make init` | `docker compose exec app uv run python scripts/init_collection.py` |
+
+### Docker
+
+| Comando make | Equivalente expandido |
+|---|---|
+| `make up` | `docker compose up --build -d` |
+| `make down` | `docker compose down` |
+| `make restart` | `docker compose down && docker compose up --build -d` |
+| `make logs` | `docker compose logs -f` |
+| `make logs-app` | `docker compose logs -f app` |
+| `make qdrant` | `docker compose up qdrant -d` |
+| `make ps` | `docker compose ps` |
+| `make shell` | `docker compose exec app /bin/bash` |
+
+### Verificação & Saúde
+
+| Comando make | Equivalente expandido |
+|---|---|
+| `make health` | `curl -sf http://localhost:6333/healthz` |
+| `make collection-info` | `curl -sf http://localhost:6333/collections/arxiv_papers \| python3 -m json.tool` |
+
+### Qualidade de Código
+
+| Comando make | Equivalente expandido |
+|---|---|
+| `make lint` | `uv run ruff check src/ scripts/` |
+| `make format` | `uv run ruff format src/ scripts/` |
+
+### Limpeza
+
+| Comando make | Equivalente expandido |
+|---|---|
+| `make clean` | `find . -type d -name __pycache__ -exec rm -rf {} +` |
+| `make clean-all` | `docker compose down -v && rm -rf .venv` |
+| `make env` | `cp .env.example .env` (só se `.env` não existir) |
 
 ---
 
@@ -134,18 +189,17 @@ sgbd-vector-database/
 ├── Makefile                  # Comandos de desenvolvimento
 ├── pyproject.toml            # Dependências (uv)
 ├── uv.lock                   # Lock de dependências
+├── .env.example              # Template de variáveis de ambiente
 ├── src/
 │   ├── config.py             # Configurações e variáveis de ambiente
-│   ├── embedding.py          # Wrapper InstructorXL
+│   ├── embedding.py          # Wrapper InstructorXL + tradução automática
 │   ├── qdrant_client_setup.py # Cliente Qdrant (singleton)
-│   ├── snapshot_restore.py   # Restauração do snapshot Arxiv
-│   ├── search.py             # Busca semântica e híbrida
+│   ├── snapshot_restore.py   # Restauração do snapshot + criação de índices
+│   ├── search.py             # Busca semântica, híbrida e multi-filtro
 │   ├── rag.py                # Pipeline RAG com fallback de modelos
 │   └── app.py                # Interface Streamlit
-├── scripts/
-│   └── init_collection.py    # Script CLI de inicialização
-└── guide/
-    └── tg.md                 # Descrição do trabalho
+└── scripts/
+    └── init_collection.py    # Script CLI de inicialização
 ```
 
 ---
